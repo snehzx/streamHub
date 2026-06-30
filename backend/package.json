@@ -1,7 +1,7 @@
 {
-  "name": "youtube-backend",
+  "name": "streamHub",
   "version": "1.0.0",
-  "description": "a backend for youtube",
+  "description": "backend for youtube",
   "type": "module",
   "keywords": [
     "javascript",
