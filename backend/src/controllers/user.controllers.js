@@ -5,6 +5,7 @@ import { uploadOnCloudinary } from "../utils/cloudinary.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import jwt from "jsonwebtoken";
 import mongoose from "mongoose";
+import e from "express";
 
 const generateAccessAndRefreshTokens = async (userId) => {
   try {
@@ -77,12 +78,17 @@ const registerUser = asyncHandler(async (req, res) => {
 });
 
 const loginUser = asyncHandler(async (req, res) => {
-  const { email, username, password } = req.body;
-  if (!(username || email) || !password) {
+  const { email, userName, password } = req.body;
+  if (!(userName || email) || !password) {
     throw new ApiError(400, "username or email and  password is required");
   }
+  const orCondition = [];
+
+  if (userName) orCondition.push({ userName });
+  if (email) orCondition.push({ email });
+
   const user = await User.findOne({
-    $or: [{ username }, { email }],
+    $or: orCondition,
   });
 
   if (!user) {
@@ -91,7 +97,7 @@ const loginUser = asyncHandler(async (req, res) => {
 
   const validPassword = await user.isPasswordCorrect(password);
   if (!validPassword) {
-    throw new ApiError(404, "invalid user credentials");
+    throw new ApiError(401, "invalid user credentials");
   }
 
   const { accessToken, refreshToken } = await generateAccessAndRefreshTokens(
@@ -128,8 +134,8 @@ const logOutUser = asyncHandler(async (req, res) => {
   await User.findByIdAndUpdate(
     req.user._id,
     {
-      $set: {
-        refreshToken: undefined,
+      $unset: {
+        refreshToken: 1,
       },
     },
     {
@@ -152,6 +158,7 @@ const logOutUser = asyncHandler(async (req, res) => {
 const refreshAccessToken = asyncHandler(async (req, res) => {
   const incomingRefreshToken =
     req.cookies.refreshToken || req.body.refreshToken;
+  console.log(incomingRefreshToken);
 
   if (!incomingRefreshToken) {
     throw new ApiError(401, "unauthorised request");
@@ -185,8 +192,11 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
       .cookie("accessToken", accessToken, options)
       .cookie("refreshToken", newRefreshToken, options)
       .json(
-        new ApiResponse(200, { accessToken, refreshToken: newRefreshToken }),
-        "Access token refreshed"
+        new ApiResponse(
+          200,
+          { accessToken, refreshToken: newRefreshToken },
+          "Access token refreshed"
+        )
       );
   } catch (error) {
     throw new ApiError(401, error?.message || "invalid refresh token");
@@ -208,7 +218,11 @@ const changeCurrentPassword = asyncHandler(async (req, res) => {
     throw new ApiError(400, "Invalid old password");
   }
 
-  user.password = newPassword();
+  if (newPassword !== confirmPassword) {
+    throw new ApiError(400, "password dont match");
+  }
+
+  user.password = newPassword;
   await user.save({ validateBeforeSave: false });
 
   return res
@@ -219,23 +233,25 @@ const changeCurrentPassword = asyncHandler(async (req, res) => {
 const getCurrentUser = asyncHandler(async (req, res) => {
   return res
     .status(200)
-    .json(new ApiResponse(), req.user, "user fetched successfully");
+    .json(new ApiResponse(200, req.user, "user fetched successfully"));
 });
 
 const updateAccountDetails = asyncHandler(async (req, res) => {
   const { fullName, email } = req.body;
 
-  if (!fullName || !email) {
+  if (!(fullName || email)) {
     throw new ApiError(400, "All feilds are required");
   }
+  //set operator needs objects as it says here are the exact feild value pair to be changed
+  //not like or which needs array
+  const updateFeilds = {};
+  if (fullName) updateFeilds.fullName = fullName;
+  if (email) updateFeilds.email = email;
 
-  const user = await User.findByIdAndDelete(
+  const user = await User.findByIdAndUpdate(
     req.user?._id,
     {
-      $set: {
-        fullName,
-        email,
-      },
+      $set: updateFeilds,
     },
     { new: true }
   ).select("-password");
@@ -254,7 +270,7 @@ const updateUserAvatar = asyncHandler(async (req, res) => {
   const avatar = await uploadOnCloudinary(avatarLocalPath);
 
   if (!avatar.url) {
-    throw new ApiError(400, "Error while uploading on avatar");
+    throw new ApiError(400, "Error while uploading avatar");
   }
 
   const user = await User.findByIdAndUpdate(
@@ -284,7 +300,7 @@ const updateUserCoverImage = asyncHandler(async (req, res) => {
     throw new ApiError(400, "failed to upload on cloudinary");
   }
 
-  const user = await User.findById(
+  const user = await User.findByIdAndUpdate(
     req.user?._id,
     {
       $set: {
@@ -300,15 +316,15 @@ const updateUserCoverImage = asyncHandler(async (req, res) => {
 });
 
 const getUserChannelProfile = asyncHandler(async (req, res) => {
-  const { username } = req.params;
-  if (!username?.trim()) {
+  const { userName } = req.params;
+  if (!userName?.trim()) {
     throw new ApiError(400, "username is missing");
   }
 
   const channel = await User.aggregate([
     {
       $match: {
-        username: username?.toLowerCase(),
+        userName: userName?.toLowerCase(),
       },
     },
     {
@@ -349,7 +365,7 @@ const getUserChannelProfile = asyncHandler(async (req, res) => {
     {
       $project: {
         fullName: 1,
-        username: 1,
+        userName: 1,
         subscribersCount: 1,
         channelsSubscribedToCount: 1,
         isSubscribed: 1,
@@ -359,6 +375,7 @@ const getUserChannelProfile = asyncHandler(async (req, res) => {
       },
     },
   ]);
+
   //aggregate() always returns array of object even if there is only one
   if (!channel?.length) {
     throw new ApiError(404, "channel does not exists");
@@ -394,7 +411,7 @@ const getWatchHistory = asyncHandler(async (req, res) => {
                 {
                   $project: {
                     fullName: 1,
-                    username: 1,
+                    userName: 1,
                     avatar: 1,
                   },
                 },
@@ -418,11 +435,11 @@ const getWatchHistory = asyncHandler(async (req, res) => {
   }
 
   return res
-    .status(300)
+    .status(200)
     .json(
       new ApiResponse(
         200,
-        user[0].WatchHistory,
+        user[0].watchHistory,
         "watch history fetched successfuly"
       )
     );
